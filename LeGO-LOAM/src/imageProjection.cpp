@@ -246,7 +246,7 @@ public:
                 continue;
             
             rangeMat.at<float>(rowIdn, columnIdn) = range;
-
+            // 将 index 和 横坐标存储在 intensity 中 整数部分是线束数值  小数部分是方向角度
             thisPoint.intensity = (float)rowIdn + (float)columnIdn / 10000.0;
 
             index = columnIdn  + rowIdn * Horizon_SCAN;
@@ -261,7 +261,7 @@ public:
         size_t lowerInd, upperInd;
         float diffX, diffY, diffZ, angle;
         // groundMat
-        // -1, no valid info to check if ground of not
+        // -1, no valid info to check if ground of not 没有有效的信息来检查是否接地
         //  0, initial value, after validation, means not ground
         //  1, ground
         for (size_t j = 0; j < Horizon_SCAN; ++j){
@@ -282,7 +282,7 @@ public:
                 diffZ = fullCloud->points[upperInd].z - fullCloud->points[lowerInd].z;
 
                 angle = atan2(diffZ, sqrt(diffX*diffX + diffY*diffY) ) * 180 / M_PI;
-
+                // 如果夹角数值小于 10 度， 则可以判断为平面
                 if (abs(angle - sensorMountAngle) <= 10){
                     groundMat.at<int8_t>(i,j) = 1;
                     groundMat.at<int8_t>(i+1,j) = 1;
@@ -292,9 +292,12 @@ public:
         // extract ground cloud (groundMat == 1)
         // mark entry that doesn't need to label (ground and invalid point) for segmentation
         // note that ground remove is from 0~N_SCAN-1, need rangeMat for mark label matrix for the 16th scan
+        
+        //标记出地面点和
         for (size_t i = 0; i < N_SCAN; ++i){
             for (size_t j = 0; j < Horizon_SCAN; ++j){
                 if (groundMat.at<int8_t>(i,j) == 1 || rangeMat.at<float>(i,j) == FLT_MAX){
+                    // 给地面点 标记一个符号 为 -1 
                     labelMat.at<int>(i,j) = -1;
                 }
             }
@@ -314,7 +317,7 @@ public:
         for (size_t i = 0; i < N_SCAN; ++i)
             for (size_t j = 0; j < Horizon_SCAN; ++j)
                 if (labelMat.at<int>(i,j) == 0)
-                    labelComponents(i, j);
+                    labelComponents(i, j);//https://zhuanlan.zhihu.com/p/72932303   4邻居的 BFS 搜索
 
         int sizeOfSegCloud = 0;
         // extract segmented cloud for lidar odometry
@@ -323,8 +326,12 @@ public:
             segMsg.startRingIndex[i] = sizeOfSegCloud-1 + 5;
 
             for (size_t j = 0; j < Horizon_SCAN; ++j) {
+                //lable >0 
                 if (labelMat.at<int>(i,j) > 0 || groundMat.at<int8_t>(i,j) == 1){
                     // outliers that will not be used for optimization (always continue)
+                    // 勾勒出优化过程中不被使用的值
+
+                    // 1. 如果label为999999则跳过
                     if (labelMat.at<int>(i,j) == 999999){
                         if (i > groundScanInd && j % 5 == 0){
                             outlierCloud->push_back(fullCloud->points[j + i*Horizon_SCAN]);
@@ -333,6 +340,8 @@ public:
                             continue;
                         }
                     }
+
+                    // 2. 如果为地，跳过index不是5的倍数的点
                     // majority of ground points are skipped
                     if (groundMat.at<int8_t>(i,j) == 1){
                         if (j%5!=0 && j>5 && j<Horizon_SCAN-5)
@@ -441,7 +450,7 @@ public:
         bool feasibleSegment = false;
         if (allPushedIndSize >= 30)
             feasibleSegment = true;
-        else if (allPushedIndSize >= segmentValidPointNum){
+        else if (allPushedIndSize >= segmentValidPointNum){   //allPushedIndSize > 7   && lineCount >= 3
             int lineCount = 0;
             for (size_t i = 0; i < N_SCAN; ++i)
                 if (lineCountFlag[i] == true)
@@ -467,16 +476,19 @@ public:
         // 2. Publish clouds
         sensor_msgs::PointCloud2 laserCloudTemp;
 
+        // 含有异常信息的点云
         pcl::toROSMsg(*outlierCloud, laserCloudTemp);
         laserCloudTemp.header.stamp = cloudHeader.stamp;
         laserCloudTemp.header.frame_id = "base_link";
         pubOutlierCloud.publish(laserCloudTemp);
         // segmented cloud with ground
+        //分割点云包含部分地面
         pcl::toROSMsg(*segmentedCloud, laserCloudTemp);
         laserCloudTemp.header.stamp = cloudHeader.stamp;
         laserCloudTemp.header.frame_id = "base_link";
         pubSegmentedCloud.publish(laserCloudTemp);
         // projected full cloud
+        //完全点云
         if (pubFullCloud.getNumSubscribers() != 0){
             pcl::toROSMsg(*fullCloud, laserCloudTemp);
             laserCloudTemp.header.stamp = cloudHeader.stamp;
@@ -484,6 +496,7 @@ public:
             pubFullCloud.publish(laserCloudTemp);
         }
         // original dense ground cloud
+        //稠密地面点云
         if (pubGroundCloud.getNumSubscribers() != 0){
             pcl::toROSMsg(*groundCloud, laserCloudTemp);
             laserCloudTemp.header.stamp = cloudHeader.stamp;
@@ -491,6 +504,7 @@ public:
             pubGroundCloud.publish(laserCloudTemp);
         }
         // segmented cloud without ground
+        //分割的非地面点云
         if (pubSegmentedCloudPure.getNumSubscribers() != 0){
             pcl::toROSMsg(*segmentedCloudPure, laserCloudTemp);
             laserCloudTemp.header.stamp = cloudHeader.stamp;
@@ -498,6 +512,7 @@ public:
             pubSegmentedCloudPure.publish(laserCloudTemp);
         }
         // projected full cloud info
+        //所有点云带range
         if (pubFullInfoCloud.getNumSubscribers() != 0){
             pcl::toROSMsg(*fullInfoCloud, laserCloudTemp);
             laserCloudTemp.header.stamp = cloudHeader.stamp;
